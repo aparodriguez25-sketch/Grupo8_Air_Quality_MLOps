@@ -1,0 +1,79 @@
+# ==============================
+# Python
+# ==============================
+__pycache__/
+*.py[cod]
+
+# ==============================
+# Entornos virtuales
+# ==============================
+.venv/
+venv/
+env/
+
+# ==============================
+# Variables de entorno y secretos
+# ==============================
+.env
+.env.local
+
+# ==============================
+# Jupyter Notebook
+# ==============================
+.ipynb_checkpoints/
+
+# ==============================
+# Visual Studio Code / IDE
+# ==============================
+.vscode/
+.idea/
+
+# ==============================
+# Testing
+# ==============================
+.pytest_cache/
+.coverage
+htmlcov/
+
+# ==============================
+# MLflow
+# ==============================
+mlruns/
+mlartifacts/
+mlflow.db
+
+# ==============================
+# Bases de datos locales
+# ==============================
+*.db
+*.sqlite
+*.sqlite3
+
+# ==============================
+# Datos generados por el pipeline
+# ==============================
+data/raw/*
+data/bronze/*
+data/interim/*
+data/processed/*
+data/production/*
+
+# Permitir archivos .gitkeep
+!data/raw/.gitkeep
+!data/bronze/.gitkeep
+!data/interim/.gitkeep
+!data/processed/.gitkeep
+!data/production/.gitkeep
+
+# ==============================
+# Modelos y artefactos
+# ==============================
+*.pkl
+*.joblib
+*.onnx
+
+# ==============================
+# Archivos del sistema operativo
+# ==============================
+.DS_Store
+Thumbs.db
