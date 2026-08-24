@@ -20,6 +20,7 @@ from src.validation.quality_gates import evaluate_quality_gates
 
 BRONZE_QUERY = "SELECT * FROM bronze.AirQuality"
 
+
 # ==========================================================
 # EJECUCIÓN DE DATA VALIDATION
 # ==========================================================
@@ -27,6 +28,7 @@ BRONZE_QUERY = "SELECT * FROM bronze.AirQuality"
 def validate_data():
     # Inicializa el engine para poder cerrarlo de forma segura.
     engine = None
+
     try:
         # Establece la conexión con SQL Server.
         engine = get_engine()
@@ -36,7 +38,6 @@ def validate_data():
             BRONZE_QUERY,
             engine,
         )
-
         # Ejecuta todas las reglas de calidad.
         results = {
             "dataset_not_empty": check_dataset_not_empty(df),
@@ -49,19 +50,22 @@ def validate_data():
             "encoded_missing_values": check_encoded_missing_values(df),
             "temporal_continuity": check_temporal_continuity(df),
         }
-
         # Evalúa las reglas y determina PASS, WARNING o FAIL.
         quality_status = evaluate_quality_gates(results)
 
         # Genera la alerta correspondiente al estado obtenido.
         alert = generate_validation_alert(quality_status)
 
+        # Detiene el pipeline si existe un fallo crítico de calidad.
+        if quality_status["status"] == "FAIL":
+            raise RuntimeError(alert["message"])
+
+        # PASS y WARNING pueden continuar.
         return {
             "results": results,
             "quality_status": quality_status,
             "alert": alert,
         }
-
     finally:
         # Libera los recursos de conexión con SQL Server.
         if engine is not None:
