@@ -24,7 +24,12 @@ EXPECTED_COLUMNS = [
 
 def check_dataset_not_empty(df):
     # Comprueba que existan datos para realizar la validación.
-    return not df.empty
+    row_count = len(df)
+
+    return {
+        "passed": row_count > 0,
+        "row_count": row_count,
+    }
 
 # ==========================================================
 # REGLA 2: ESQUEMA DEL DATASET
