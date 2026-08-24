@@ -9,6 +9,32 @@ El objetivo final del proyecto es seleccionar una variable ambiental relevante y
 - Károl Godínez Solís
 - Arlen Almansa Rodríguez
 
+## Avance y estado de las etapas del proyecto
+Etapas completadas se marcaran con **x**:
+- [x] Repositorio Git
+- [x] Configuración del entorno
+- [x] Conexión reproducible con SQL Server
+- [x] Ingesta reproducible
+- [x] Capa RAW / Bronze
+- [x] Data Validation
+- [x] Diagnóstico de Data Quality
+- [x] Data Quality Gates
+- [x] Sistema de alertas PASS / WARNING / FAIL
+- [x] Verificación de detención ante fallos críticos
+- [x] Documentación del diagnóstico de calidad
+- [x] Data Cleaning
+- [ ] EDA
+- [ ] Selección de variable ambiental objetivo
+- [ ] Feature Engineering
+- [ ] Entrenamiento del modelo de forecasting
+- [ ] MLflow Tracking
+- [ ] Evaluación
+- [ ] Model Registry
+- [ ] API
+- [ ] Docker
+- [ ] Monitoreo
+
+
 # Flujo actual del pipeline
 
 Las etapas implementadas actualmente siguen el siguiente flujo:
@@ -30,15 +56,13 @@ El proyecto fue desarrollado utilizando un entorno virtual de Python.
 # 1. Clonar el repositorio
 
 Clonar el repositorio desde GitHub:
+ git clone https://github.com/aparodriguez25-sketch/Grupo8_Air_Quality_MLOps.git
 
-powershell git clone https://github.com/aparodriguez25-sketch/Grupo8_Air_Quality_MLOps.git
-
-Ingresar al proyecto:powershell cd Grupo8_Air_Quality_MLOps
+Ingresar al proyecto: cd Grupo8_Air_Quality_MLOps
 
 # 2. Crear el entorno virtual
 
-Desde la raíz del proyecto ejecutar:
-powershell python -m venv .venv
+Desde la raíz del proyecto ejecutar: python -m venv .venv
 
 # 3. Activar el entorno virtual
 
@@ -73,10 +97,9 @@ La configuración de conexión con SQL Server se administra mediante variables d
 El repositorio contiene: .env.example
 Crear una copia llamada:.env
 En PowerShell puede realizarse mediante:
-powershell Copy-Item .env.example .env
+powershell: Copy-Item .env.example .env
 
 El archivo deberá contener una configuración equivalente a:
-
 .env
 DB_SERVER=localhost
 DB_DATABASE=AirQuality
@@ -278,31 +301,56 @@ Este documento incluye el análisis de:
 
 No se eliminaron o imputaron datos automáticamente durante esta etapa sin analizar primero su impacto.
 
-# 17. Estado actual del proyecto
+# 17.# Etapa 5 — Data Cleaning
 
-Etapas completadas:
-- [x] Repositorio Git
-- [x] Configuración del entorno
-- [x] Conexión reproducible con SQL Server
-- [x] Ingesta reproducible
-- [x] Capa RAW / Bronze
-- [x] Data Validation
-- [x] Diagnóstico de Data Quality
-- [x] Data Quality Gates
-- [x] Sistema de alertas PASS / WARNING / FAIL
-- [x] Verificación de detención ante fallos críticos
-- [x] Documentación del diagnóstico de calidad
+La limpieza de datos se implementa mediante funciones reutilizables ubicadas en:
+src/cleaning/
+├── __init__.py
+├── clean.py
+└── transformations.py
 
-Etapas posteriores:
+La etapa utiliza como entrada los datos almacenados en:bronze.AirQuality 
+y aplica el siguiente proceso:
 
-- [ ] Data Cleaning
-- [ ] EDA
-- [ ] Selección de variable ambiental objetivo
-- [ ] Feature Engineering
-- [ ] Entrenamiento del modelo de forecasting
-- [ ] MLflow Tracking
-- [ ] Evaluación
-- [ ] Model Registry
-- [ ] API
-- [ ] Docker
-- [ ] Monitoreo
+bronze.AirQuality
+        ↓
+Conversión de variables numéricas
+        ↓
+Normalización de coma decimal
+        ↓
+Conversión de -200 a NaN
+        ↓
+Eliminación de filas completamente vacías
+        ↓
+Creación de timestamp
+        ↓
+Dataset preparado para EDA
+
+## Ejecutar Data Cleaning
+
+Desde la raíz del proyecto y con el entorno virtual activo:
+powershell: python -m src.cleaning.clean
+
+Resultado esperado:
+Data Cleaning completado correctamente.
+Filas originales: 9471
+Filas después de limpieza: 9357
+Filas eliminadas: 114
+Columnas: 16
+
+La limpieza:
+- convierte las variables ambientales y sensores a formato numérico;
+- normaliza valores con coma decimal;
+- convierte los valores -200 a NaN;
+- elimina únicamente las 114 filas completamente vacías;
+- conserva registros con valores faltantes parciales;
+- crea la columna temporal timestamp;
+- conserva Date y Time para trazabilidad.
+
+No se realiza todavía imputación de valores faltantes ni eliminación automática de outliers. Estas decisiones se tomarán mediante evidencia obtenida durante el EDA.
+
+Las etapas posteriores pueden reutilizar la misma lógica mediante:
+python: from src.cleaning.clean import clean_data
+       df = clean_data()
+
+De esta manera, EDA, Feature Engineering y entrenamiento utilizan la misma lógica de preparación de datos.
