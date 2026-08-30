@@ -1,0 +1,34 @@
+artifact_path: file:D:/Ciencia de Datos/06 Proyecto Integrador/Leccion 12/Proyecto
+  final/Grupo8_Air_Quality_MLOps/mlartifact/1/models/m-86f5720dccd54908a30e9b8be01029ab/artifacts
+flavors:
+  python_function:
+    env:
+      conda: conda.yaml
+      virtualenv: python_env.yaml
+    loader_module: mlflow.sklearn
+    model_path: model.pkl
+    predict_fn: predict
+    python_version: 3.14.6
+  sklearn:
+    code: null
+    pickled_model: model.pkl
+    serialization_format: pickle
+    sklearn_version: 1.9.0
+    skops_trusted_types: null
+is_signature_from_type_hint: false
+mlflow_version: 3.15.2
+model_id: m-86f5720dccd54908a30e9b8be01029ab
+model_size_bytes: 82412
+model_uuid: m-86f5720dccd54908a30e9b8be01029ab
+prompts: null
+run_id: 7372fd65f95c4026a145ad8b52dba50b
+saved_input_example_info:
+  artifact_path: input_example.json
+  serving_input_path: serving_input_example.json
+  type: ndarray
+signature:
+  inputs: '[{"type": "tensor", "tensor-spec": {"dtype": "float64", "shape": [-1, 12]}}]'
+  outputs: '[{"type": "tensor", "tensor-spec": {"dtype": "float64", "shape": [-1]}}]'
+  params: null
+type_hint_from_example: false
+utc_time_created: '2026-08-30 04:19:14.999962'

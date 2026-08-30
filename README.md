@@ -708,3 +708,60 @@ El punto de entrada recomendado para continuar es:
 python:
 from src.features.prepare_model_data import prepare_model_data
 df = prepare_model_data()
+
+# En el notebook modeling se hicierón los siguietnes pasos
+
+- Importación de librerías: Se immportan las librerías necesarias para hacer el modelado de datos.
+- Carga de datos. Se preocede a cargar el dataframe mediante la función prepare_model_data que se encuentra en la siguiente ruta D:\Ciencia de Datos\06 Proyecto Integrador\Leccion 12\Proyecto final\Grupo8_Air_Quality_MLOps\src\features\prepare_model_data.py
+- Definición de variables predictorias (X) y variable objetivo  (y): Se crean las variables x concentracion de C6H6_GT y los features que son predictoras y la variable objetivo que es target_next_hour
+- División en conjunto de entrenamiento y prueba: X y y se dividen para X_train, X_test, y_train, y_test y en este caso se usa un 20% de los datos para test y el 80% restante para train. Obtenemos la siguiente distribución.
+
+Registros de entrenamiento: 6579
+Registros de prueba: 1645
+
+- Escalado de variables: Se usa el método StandardScaler(), para escalar los modelos de red neuronal y SVM que son sensibles a la escala de datos. Arbol de decisión no es sensible a la escala de datos.
+- Entrenamiento de los modelos: Se usa la función DecisionTreeRegressor para el módelo de árbol y tambien el método fit para entrenamiento. Se usa la función MLPRegressor para la red neuronal e igualmente el método fit para entrenar el módelo. Para el módelo SVM se uso la función SVR para el modelado y la función fit, para entrenar el modelo
+- Cálculo de métricas (RMSE, MAE, R2) para cada modelo: Se crea la función calcular_metricas(y_real, y_pred) y posteriormente se llama a esta función para calcular las métricas con nuestros datos. Adicionalmente se concluye que el mejor modelo a utilizar es las redes neuronales.
+- Gráfico del mejor modelo: Se usa la libretia de matplotlib para generar un gráfico donde se detalla el mejor modelo a utilizar y lo compara con las otras métricas
+
+# 28. Integración con MLFlow
+
+Como primerm paso debemos ejecutar el siguiente comando para crear un entorno virtual en Visual Studio Code
+
+python -m venv Air_Quality_MLOps_MLFlow
+
+Ahora tenemos que acticar el virtual enviroment, pero si nos da un error de seguridad primero debemos correr el siguiente 
+
+comando Set-ExcecutionPolicy -ExecutionPolicy RemoteSigned -Scope CurrentUser
+
+Seguidamente activamos con el comando 
+
+.\Air_Quality_MLOps_MLFlow\Scripts\Activate.ps1
+
+Seguidamente en el entorno virtual corremos el siguiente comando
+
+pip install mlflow scikit-learn pandas matplotlib 
+
+Ahora vamos a correr el servidor de tracking de MLFlow y la baase de datos mlflow.db con el comando 
+
+mlflow sercer --backend-store-uri sqlite:///mlflow.db --default-artifact-root ./mlartifact
+--host 127.0.0.1 --port 5000
+
+Ahora en en el directorio \Air_Quality_MLOps_MLFlow creamos un archivo llamado entrenamiento2.py
+
+En ese archivo de entrenamiento en forma resumida se crea el df usando prepare_model_data(). Se asignal los features y la variable target. Se genera un 20% de la información para pruebas. Se hace el escalado de las variables porque el modelo de red neuronal es sensible a la escala de datos. Se crean los hiperparametros del modelo. Se hace un escalado de variables debido a que las redes neuronales son sensibles a la escala de datos. Se crean los hiperparametros para generar mas de 1 run en MLFlow.  Se crea una función llamada calcular_metricas para rmse, mae, r2. Se crea el código para crear 5 runs en MLFlow. Se registran los parametros para MLFlow. Se entrena el modelo. Se calcula las metricasc en train y test. Por último se registran las métricas en MLFlow.
+
+Ahora lo que debemos de hacer es correr el script entrenamiento2.py. Usamos el siguietne comando
+
+python .\Air_Quality_MLOps_MLFlow\entrenamiento.py
+
+Se debe obtener el siguiente output.
+
+Se completaron todas las corridas del experimento.
+Para visualizar y comparar jjlos resultados, abrir en el navegador:
+    http://127.0.0.1:5000
+
+
+
+
+
