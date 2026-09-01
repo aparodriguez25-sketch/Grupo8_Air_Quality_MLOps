@@ -762,6 +762,24 @@ Para visualizar y comparar jjlos resultados, abrir en el navegador:
     http://127.0.0.1:5000
 
 
+# 29. API Fast
+
+En el script api_prediccion.py se realizan los siguientes procesos. Se inportan las librerias y se configura para acceder a MLFlow. Se carga el modelo y los escaladores desde MLFlow. Se elige el modelo con menor error que es el mejor modelo. Se procede hacer manejo de excepciones para datos erróneos. Se procede a crear la APIFast tambión con manejo de errores.
+
+Para correr API Fast se debe seguir los siguientes pasos
+
+
+    1. Instalar dependencias (con el entorno virtual activado):
+        pip install fastapi "uvicorn[standard]" mlflow joblib pandas numpy
+    2. Tener el servidor MLflow levantado (con al menos una corrida
+       registrada exitosamente), por ejemplo:
+        mlflow server --backend-store-uri sqlite:///mlflow.db --host 127.0.0.1 --port 5000
+    3. Ejecutar la API (desde la raiz del proyecto, junto a la carpeta src):
+        uvicorn api_prediccion:app --reload --port 8000
+    4. Abrir la documentacion interactiva en:
+        http://127.0.0.1:8000/docs
+
+
 
 
 
