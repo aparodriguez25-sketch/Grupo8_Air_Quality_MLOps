@@ -1,0 +1,55 @@
+# docker-compose para levantar, en un solo comando:
+#   - la API de predicción (el contenedor que ya venías construyendo)
+#   - Prometheus (recolecta y almacena las métricas de /metrics)
+#   - Grafana (dashboards visuales sobre esas métricas)
+#
+# Uso:
+#   docker compose -f docker-compose.monitoring.yml up --build
+#
+# Luego:
+#   - API:        http://localhost:8000/docs
+#   - Prometheus: http://localhost:9090
+#   - Grafana:    http://localhost:3000  (usuario/clave por defecto: admin/admin)
+
+services:
+  # ---------------------------------------------------------------------
+  # LA API (mismo Dockerfile que ya tenías, sin cambios)
+  # ---------------------------------------------------------------------
+  api:
+    build: .                          # Usa el Dockerfile de la raíz del proyecto
+    container_name: api_prediccion_c6h6
+    ports:
+      - "8000:8000"                   # Expone la API también fuera de docker-compose, para probarla directo
+    restart: unless-stopped            # Si el contenedor se cae, Docker lo reinicia solo (salvo que lo pares vos)
+
+  # ---------------------------------------------------------------------
+  # PROMETHEUS (recolecta las métricas de /metrics cada 15s)
+  # ---------------------------------------------------------------------
+  prometheus:
+    image: prom/prometheus:latest
+    container_name: prometheus
+    volumes:
+      - ./prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      # Se monta el archivo de configuración local dentro del contenedor,
+      # en modo solo-lectura (":ro"), en la ruta donde Prometheus lo busca
+      # por defecto.
+    ports:
+      - "9090:9090"                   # UI web de Prometheus (útil para explorar métricas crudas)
+    depends_on:
+      - api                            # Espera a que el servicio "api" arranque antes de iniciar
+    restart: unless-stopped
+
+  # ---------------------------------------------------------------------
+  # GRAFANA (dashboards visuales sobre los datos que junta Prometheus)
+  # ---------------------------------------------------------------------
+  grafana:
+    image: grafana/grafana:latest
+    container_name: grafana
+    ports:
+      - "3000:3000"                   # UI web de Grafana
+    environment:
+      - GF_SECURITY_ADMIN_USER=admin       # Usuario inicial (cambiar en un entorno real)
+      - GF_SECURITY_ADMIN_PASSWORD=admin    # Clave inicial (cambiar en un entorno real)
+    depends_on:
+      - prometheus
+    restart: unless-stopped

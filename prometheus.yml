@@ -1,0 +1,15 @@
+# Configuración de Prometheus: le dice qué servicios "scrapear" (consultar
+# periódicamente) para recolectar métricas, y cada cuánto hacerlo.
+
+global:
+  scrape_interval: 15s      # Cada cuánto Prometheus consulta /metrics (15s es un valor estándar razonable)
+  evaluation_interval: 15s  # Cada cuánto evalúa reglas de alertas (si las hubiera)
+
+scrape_configs:
+  - job_name: "api_prediccion_c6h6"   # Nombre identificador de este grupo de targets, en la UI de Prometheus
+    static_configs:
+      - targets: ["api:8000"]
+        # "api" es el nombre del servicio de la API dentro de la red de
+        # docker-compose (ver docker-compose.monitoring.yml) — Docker
+        # resuelve ese nombre como si fuera un hostname interno, no hace
+        # falta usar localhost ni la IP del contenedor.

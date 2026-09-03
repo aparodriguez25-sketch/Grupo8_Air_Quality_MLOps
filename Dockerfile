@@ -8,8 +8,8 @@ WORKDIR /app
 
 # Dependencias primero: aprovecha el cache de Docker.
 # Si solo cambias el código, esta capa no se reconstruye.
-COPY requirements1.txt .
-RUN pip install --no-cache-dir -r requirements1.txt
+COPY requirements.txt .
+RUN pip install --no-cache-dir -r requirements.txt
 
 # Código de la API y modelo ya exportado (autocontenido, sin dependencia de red)
 COPY app/ ./app/

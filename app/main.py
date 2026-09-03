@@ -20,15 +20,28 @@ por lo que el contenedor es autocontenido.
 import json
 import math
 import logging
+import time
 from pathlib import Path
 
 import joblib
 import pandas as pd
 import mlflow.pyfunc                                              # pyfunc: interfaz generica de MLflow para predecir
 from fastapi import FastAPI, HTTPException, Request, status
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, Response
 from fastapi.exceptions import RequestValidationError
 from pydantic import BaseModel, create_model, field_validator
+
+# Modulo propio de monitoreo: define las metricas de Prometheus y funciones
+# auxiliares para registrarlas (ver monitoring.py para el detalle comentado
+# de cada metrica).
+from app.monitoring import (
+    registrar_prediccion,
+    registrar_error,
+    marcar_modelo_disponible,
+    registrar_request,
+    generar_metricas,
+    REQUEST_LATENCY_SEGUNDOS,
+)
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("app.main")
@@ -71,6 +84,7 @@ try:
     load_error = None
     logger.info(f"Modelo cargado correctamente (run de origen: {MODEL_VERSION}).")
     logger.info(f"Features esperadas ({len(FEATURE_COLUMNS)}): {FEATURE_COLUMNS}")
+    marcar_modelo_disponible(True)                        # Gauge de Prometheus en 1: modelo OK
 except Exception as e:
     modelo = None
     escalador_X = None
@@ -80,6 +94,7 @@ except Exception as e:
     MODEL_VERSION = "desconocida"
     load_error = str(e)
     logger.exception("No se pudo cargar el modelo o sus artefactos auxiliares.")
+    marcar_modelo_disponible(False)                       # Gauge de Prometheus en 0: modelo NO disponible
 
 
 # ---------------------------------------------------------------------------
@@ -141,6 +156,7 @@ async def manejador_errores_validacion(request: Request, exc: RequestValidationE
         for error in exc.errors()
     ]
     logger.warning(f"Solicitud invalida recibida: {errores_legibles}")
+    registrar_error("validacion_422")                      # Metrica: se suma 1 al contador de errores de validacion
     return JSONResponse(
         status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
         content={"error": "Datos de entrada invalidos.", "detalle": errores_legibles},
@@ -148,8 +164,47 @@ async def manejador_errores_validacion(request: Request, exc: RequestValidationE
 
 
 # ---------------------------------------------------------------------------
+# MIDDLEWARE DE MONITOREO (mide latencia y cuenta requests de TODOS los
+# endpoints automaticamente, sin tener que instrumentar cada uno a mano)
+# ---------------------------------------------------------------------------
+@app.middleware("http")
+async def middleware_monitoreo(request: Request, call_next):
+    """
+    Se ejecuta antes y despues de CADA request que llega a la API (incluido
+    /metrics y /docs). Mide cuanto tarda, y al final registra tanto la
+    latencia (histograma) como el conteo (por endpoint/metodo/codigo HTTP).
+    Se excluye /metrics del conteo para no "contaminar" las metricas con las
+    propias consultas de Prometheus scrapeando el endpoint.
+    """
+    ruta = request.url.path                                  # ej: "/predict", "/health"
+    inicio = time.perf_counter()
+
+    respuesta = await call_next(request)                       # Ejecuta el endpoint real y espera su respuesta
+
+    duracion = time.perf_counter() - inicio
+
+    if ruta != "/metrics":                                     # No medir las propias consultas de Prometheus
+        registrar_request(endpoint=ruta, metodo=request.method, codigo_http=respuesta.status_code)
+        REQUEST_LATENCY_SEGUNDOS.labels(endpoint=ruta).observe(duracion)
+
+    return respuesta
+
+
+# ---------------------------------------------------------------------------
 # ENDPOINTS
 # ---------------------------------------------------------------------------
+@app.get("/metrics")
+def metrics():
+    """
+    Endpoint que Prometheus consulta periodicamente (scraping) para leer
+    todas las metricas acumuladas hasta el momento, en su formato de texto
+    estandar. No requiere autenticacion aca por simplicidad, pero en un
+    entorno real conviene restringirlo por red (no exponerlo publicamente).
+    """
+    cuerpo, content_type = generar_metricas()
+    return Response(content=cuerpo, media_type=content_type)
+
+
 @app.get("/health")
 def health():
     if modelo is None:
@@ -160,6 +215,7 @@ def health():
 @app.post("/predict", response_model=PredictionResponse)
 def predict(features: EntradaPrediccion):
     if modelo is None:
+        registrar_error("modelo_no_disponible_503")           # Metrica: se suma 1 al contador de este tipo de error
         raise HTTPException(status_code=503, detail=f"El modelo no se cargó correctamente: {load_error}")
 
     # Se arma un DataFrame de una sola fila, respetando el MISMO orden de
@@ -181,7 +237,10 @@ def predict(features: EntradaPrediccion):
 
     if math.isnan(prediccion_real) or math.isinf(prediccion_real):
         logger.error(f"El modelo devolvio un valor invalido: {prediccion_real}")
+        registrar_error("prediccion_invalida_500")            # Metrica: se suma 1 al contador de este tipo de error
         raise HTTPException(status_code=500, detail="El modelo genero una prediccion invalida (NaN/infinito).")
+
+    registrar_prediccion(float(prediccion_real))               # Metrica: se agrega este valor al histograma de predicciones
 
     return {
         "target_next_hour_predicho": float(prediccion_real),
