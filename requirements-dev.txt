@@ -1,0 +1,14 @@
+# Dependencias SOLO para desarrollo/pruebas — no van dentro de la imagen Docker final,
+# para no aumentar el tamaño del contenedor con herramientas que no se usan en producción.
+-r requirements.txt
+pytest==8.3.3
+httpx==0.27.2
+numpy==2.5.2
+
+# scikit-learn==1.5.1 no tiene wheel para Python 3.14 (cp314); recien desde
+# la version 1.7.2 scikit-learn publica wheels para 3.14. Sin wheel, pip
+# intenta compilar desde el codigo fuente (via meson), lo cual requiere un
+# compilador de C/C++ (Visual Studio Build Tools) no instalado en el equipo,
+# y por eso fallaba con el error de meson/vswhere. Se actualiza a >=1.9.0,
+# que si trae wheels precompiladas para cp314 en Windows.
+scikit-learn>=1.9.0

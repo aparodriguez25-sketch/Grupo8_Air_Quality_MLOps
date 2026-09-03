@@ -44,6 +44,7 @@ from sklearn.metrics import (                                # Metricas de evalu
 )
 
 import joblib                                              # Para serializar el escalador del target como artefacto
+import tempfile                                               # Creacion de carpeta temporal para artefactos
 
 # Se reutiliza la unica implementacion oficial de preparacion de datos del
 # proyecto, en vez de duplicar aqui la carga y limpieza del Excel. Esto
@@ -133,11 +134,11 @@ y_test_esc = escalador_y.transform(y_test.values.reshape(-1, 1)).ravel()
 # ---------------------------------------------------------------------------
 # 5. HIPERPARAMETROS DEL MODELO (varias configuraciones = varios runs)
 # ---------------------------------------------------------------------------
-# Se define una LISTA de
+# En vez de un unico diccionario de hiperparametros, se define una LISTA de
 # configuraciones distintas. Cada elemento de la lista se entrena y se
 # registra como una corrida (run) separada en MLflow, todas bajo el mismo
 # experimento ("prediccion_C6H6_GT_red_neuronal"), lo que permite compararlas
-# en la interfaz (tabla de runs) 
+# en la interfaz (tabla de runs, graficos de comparacion de metricas, etc.)
 configuraciones_hiperparametros = [
     {
         "nombre_run": "MLP_1capa_32",
@@ -219,22 +220,33 @@ for config in configuraciones_hiperparametros:
 
         # Tambien se registran metadatos utiles del experimento (no son
         # hiperparametros del modelo, pero ayudan a documentar la corrida)
-       # mlflow.log_param("n_features", len(columnas_features))    # Cantidad de variables predictoras usadas
-        #mlflow.log_param("features", ", ".join(columnas_features)) # Nombres de las features, como texto
-        #mlflow.log_param("n_train", len(X_train))                    # Cantidad de registros de entrenamiento
-        #mlflow.log_param("n_test", len(X_test))                       # Cantidad de registros de prueba
-        #mlflow.log_param("test_size", 0.2)                              # Proporcion usada para el conjunto de prueba
-        #mlflow.log_param("split_type", "cronologico_sin_mezcla")         # Se documenta que el split respeta el tiempo
+        mlflow.log_param("n_features", len(columnas_features))    # Cantidad de variables predictoras usadas
+        mlflow.log_param("features", ", ".join(columnas_features)) # Nombres de las features, como texto
+        mlflow.log_param("n_train", len(X_train))                    # Cantidad de registros de entrenamiento
+        mlflow.log_param("n_test", len(X_test))                       # Cantidad de registros de prueba
+        mlflow.log_param("test_size", 0.2)                              # Proporcion usada para el conjunto de prueba
+        mlflow.log_param("split_type", "cronologico_sin_mezcla")         # Se documenta que el split respeta el tiempo
 
         # -- 7.2 Entrenar el modelo ----------------------------------------------
         modelo_red = MLPRegressor(**hiperparametros)               # Se instancia el modelo con los hiperparametros de esta config
         modelo_red.fit(X_train_esc, y_train_esc)                     # Entrenamiento con datos escalados (features y target)
 
-        # -- 7.3 Calcular metricas en train y test --------------------------------
+        # Se registra cuantas iteraciones reales tomo converger (metrica de diagnostico)
+        mlflow.log_metric("n_iter_convergencia", modelo_red.n_iter_)
+
+        # -- 7.3 Generar predicciones y devolverlas a la escala original --------
+        pred_train_esc = modelo_red.predict(X_train_esc)             # Prediccion sobre el set de entrenamiento (escalada)
+        pred_test_esc = modelo_red.predict(X_test_esc)                 # Prediccion sobre el set de prueba (escalada)
+
+        # Se revierte el escalado para volver a las unidades originales de C6H6_GT
+        pred_train = escalador_y.inverse_transform(pred_train_esc.reshape(-1, 1)).ravel()
+        pred_test = escalador_y.inverse_transform(pred_test_esc.reshape(-1, 1)).ravel()
+
+        # -- 7.4 Calcular metricas en train y test --------------------------------
         rmse_train, mae_train, r2_train = calcular_metricas(y_train, pred_train)  # Metricas sobre datos de entrenamiento
         rmse_test, mae_test, r2_test = calcular_metricas(y_test, pred_test)         # Metricas sobre datos de prueba
 
-        # -- 7.4 Registrar las metricas en MLflow ----------------------------------
+        # -- 7.5 Registrar las metricas en MLflow ----------------------------------
         # Metricas de entrenamiento (permiten detectar sobreajuste al compararlas con test)
         mlflow.log_metric("rmse_train", rmse_train)
         mlflow.log_metric("mae_train", mae_train)
@@ -244,6 +256,87 @@ for config in configuraciones_hiperparametros:
         mlflow.log_metric("rmse_test", rmse_test)
         mlflow.log_metric("mae_test", mae_test)
         mlflow.log_metric("r2_test", r2_test)
+
+        # Se imprime un resumen en consola para seguimiento inmediato
+        print(f"RMSE test: {rmse_test:.4f} | MAE test: {mae_test:.4f} | R2 test: {r2_test:.4f}")
+
+        # -- 7.6 Generar graficos de diagnostico y loguearlos como artefactos -----
+        # Se crea una carpeta temporal para guardar los graficos antes de subirlos a MLflow
+        carpeta_temporal = tempfile.mkdtemp()
+
+        # Grafico A: Real vs Predicho en el tiempo (conjunto de prueba)
+        timestamps_test = df["timestamp"].iloc[X_test.index]        # Fechas correspondientes al set de prueba
+        plt.figure(figsize=(12, 4))
+        plt.plot(timestamps_test, y_test.values, label="Valor real", color="black", linewidth=1, alpha=0.7)
+        plt.plot(timestamps_test, pred_test, label=f"Prediccion ({nombre_run})", color="#DD8452", linewidth=1)
+        plt.title(f"Red Neuronal ({nombre_run}): Real vs Prediccion (conjunto de prueba)")
+        plt.xlabel("Fecha")
+        plt.ylabel("C6H6_GT (t+1h)")
+        plt.legend()
+        plt.tight_layout()
+        ruta_grafico_serie = os.path.join(carpeta_temporal, "real_vs_prediccion.png")  # Ruta del archivo temporal
+        plt.savefig(ruta_grafico_serie, bbox_inches="tight")          # Se guarda la imagen en disco
+        plt.close()                                                     # Se cierra la figura para liberar memoria
+
+        # Grafico B: Dispersion Real vs Predicho (que tan cerca estan los puntos de la diagonal ideal)
+        plt.figure(figsize=(5, 5))
+        plt.scatter(y_test, pred_test, alpha=0.3, s=10, color="#DD8452")
+        limite_min = min(y_test.min(), pred_test.min())
+        limite_max = max(y_test.max(), pred_test.max())
+        plt.plot([limite_min, limite_max], [limite_min, limite_max], "k--", linewidth=1)  # Linea de prediccion perfecta
+        plt.title(f"Dispersion: Real vs Predicho ({nombre_run})")
+        plt.xlabel("Valor real")
+        plt.ylabel("Valor predicho")
+        plt.tight_layout()
+        ruta_grafico_dispersion = os.path.join(carpeta_temporal, "dispersion.png")
+        plt.savefig(ruta_grafico_dispersion, bbox_inches="tight")
+        plt.close()
+
+        # Se suben ambos graficos a MLflow como artefactos de la corrida
+        mlflow.log_artifact(ruta_grafico_serie, artifact_path="graficos")
+        mlflow.log_artifact(ruta_grafico_dispersion, artifact_path="graficos")
+
+        # -- 7.7 Guardar y loguear los escaladores (necesarios para produccion) ---
+        # El modelo por si solo no sabe escalar/des-escalar datos nuevos, por lo
+        # que los escaladores deben guardarse junto con el modelo para poder
+        # reproducir el mismo preprocesamiento en produccion.
+        ruta_escalador_X = os.path.join(carpeta_temporal, "escalador_X.pkl")
+        ruta_escalador_y = os.path.join(carpeta_temporal, "escalador_y.pkl")
+        joblib.dump(escalador_X, ruta_escalador_X)                    # Se serializa el escalador de features
+        joblib.dump(escalador_y, ruta_escalador_y)                     # Se serializa el escalador del target
+        mlflow.log_artifact(ruta_escalador_X, artifact_path="escaladores")
+        mlflow.log_artifact(ruta_escalador_y, artifact_path="escaladores")
+
+        # -- 7.8 Registrar el modelo entrenado en MLflow ---------------------------
+        # infer_signature documenta el esquema de entrada (features escaladas) y
+        # salida (prediccion escalada) del modelo, para validaciones futuras.
+        firma_modelo = infer_signature(X_train_esc, pred_train_esc)
+        ejemplo_entrada = X_train_esc[:5]                              # Ejemplo de 5 filas de entrada, para referencia
+
+        mlflow.sklearn.log_model(
+            sk_model=modelo_red,                     # El modelo entrenado a registrar
+            name="modelo_red_neuronal",              # Carpeta/artifact_path dentro de la corrida donde se guarda
+            signature=firma_modelo,                  # Firma de entrada/salida del modelo
+            input_example=ejemplo_entrada,            # Ejemplo de entrada valido
+            registered_model_name=None,               # Si se quiere registrar en el Model Registry, poner un nombre aqui
+            # MLflow 3.x usa por defecto el formato "skops" para serializar, el
+            # cual bloquea tipos internos de sklearn (como el optimizador Adam
+            # del MLPRegressor) por seguridad. Se usa "pickle" en su lugar, el
+            # formato clasico y totalmente compatible con MLPRegressor.
+            serialization_format="pickle",
+        )
+
+        # -- 7.9 Etiquetas (tags) descriptivas de la corrida ------------------------
+        mlflow.set_tag("modelo", "MLPRegressor")
+        mlflow.set_tag("problema", "prediccion_C6H6_GT_1h")
+        mlflow.set_tag("preprocesamiento", "StandardScaler en features y target")
+        mlflow.set_tag("configuracion", nombre_run)
+
+        # -- 7.10 Se guarda el ID de la corrida para referencia ---------------------
+        print(f"Run ID de MLflow: {run.info.run_id}")
+        print(f"Corrida '{nombre_run}' registrada correctamente en MLflow.")
+
 print("\nSe completaron todas las corridas del experimento.")
-print("Para visualizar y comparar jjlos resultados, abrir en el navegador:")
+print("Para visualizar y comparar los resultados, abrir en el navegador:")
 print("    http://127.0.0.1:5000")
+
