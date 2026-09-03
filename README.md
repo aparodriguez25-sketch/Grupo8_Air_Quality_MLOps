@@ -779,6 +779,24 @@ Para correr API Fast se debe seguir los siguientes pasos
     4. Abrir la documentacion interactiva en:
         http://127.0.0.1:8000/docs
 
+# 30. Docker
+
+Se crea el script export_model.py. Este script básicamente se crea la funcion _intentar_cargar Intenta cargar el modelo y los dos escaladores de un run puntual. Devuelve (modelo, escalador_X, escalador_y) si todo carga bien, o lanza una excepcion si falta algo (corrida incompleta/interrumpida). Luego se crea la función _seleccionar_run_automaticamente,la cual busca, entre las corridas del experimento ordenadas por rmse_test
+ascendente, la primera que cargue sin errores (modelo + escaladores). Posteriormente se crea una carpeta para almacenar los modelos y los escaladores. Ahora se guardan las columnas de features/target en un JSON local.
+
+Ahora se corre el script anterior con el comando 
+
+python export_model.py
+
+Ahora se crean los archivos de Dockerfile, README1.md, requirements1.txt, .dockerignore, Dockerfile y se crea la carpeta app y se le ingresa el script main.py
+
+Con el siguiente comando se crea la imagen que va a usar Docker.
+
+docker build -t grupo8_air_quality_mlops .
+
+Con el siguiente comando se crea el container
+
+docker run -p 8000:8000 grupo8_air_quality_mlops   
 
 
 
