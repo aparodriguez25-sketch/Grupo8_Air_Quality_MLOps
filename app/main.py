@@ -1,119 +1,96 @@
 """
-==============================================================================
-API DE PREDICCION DE C6H6_GT (BENCENO, PROXIMA HORA) - VERSION CONTENEDOR
-==============================================================================
-A diferencia de api_prediccion.py (pensado para desarrollo local, conectado
-en vivo al servidor MLflow), esta version esta pensada para correr DENTRO
-del contenedor Docker: carga el modelo, los escaladores y los nombres de
-las features desde la carpeta local 'model_artifact/' (generada una sola
-vez con export_model.py), sin conectarse a MLflow ni importar 'src'.
+API de inferencia — predicción de C6H6_GT (benceno, próxima hora), servida
+con MLflow (pyfunc) + FastAPI. Adaptado del patrón de carga robusta usado
+en el proyecto de referencia (clasificación de vinos), pero para regresión
+y con un esquema de entrada generado dinámicamente a partir de las features
+reales del proyecto (no hay rangos físicos conocidos de antemano, como sí
+los hay para la química del vino, así que se valida NaN/infinito en vez de
+rangos gt/lt fijos por campo).
 
-Esto hace que el contenedor sea autocontenido: no necesita red, ni acceso
-al servidor MLflow, ni a SQL Server, para poder predecir.
+Endpoints:
+    GET  /health   -> verifica que el servicio y el modelo están cargados
+    POST /predict  -> recibe las features, devuelve la predicción de
+                       target_next_hour (concentración de C6H6_GT en t+1h)
 
-Estructura esperada dentro del contenedor (ver Dockerfile):
-    /app/
-      app/main.py              <- este archivo
-      model_artifact/
-        modelo/                <- modelo sklearn guardado con mlflow.sklearn.save_model
-        escaladores/
-          escalador_X.pkl
-          escalador_y.pkl
-        feature_columns.json   <- {"feature_columns": [...], "target_column": "..."}
-        RUN_ID.txt
-
-Como correr localmente para probar (fuera de Docker), desde la raiz del
-proyecto, habiendo corrido antes export_model.py:
-    uvicorn app.main:app --reload --port 8000
-==============================================================================
+Todo se carga desde la carpeta local 'model_artifact/' (generada una sola
+vez con export_model.py): no hay conexión a MLflow en vivo ni a SQL Server,
+por lo que el contenedor es autocontenido.
 """
 
-# ---------------------------------------------------------------------------
-# 1. IMPORTACION DE LIBRERIAS
-# ---------------------------------------------------------------------------
-import os
 import json
 import math
 import logging
 from pathlib import Path
 
-import pandas as pd                                            # Construccion del DataFrame de entrada al modelo
-import mlflow.sklearn                                             # Carga LOCAL del modelo (sin conexion a ningun servidor)
-import joblib                                                       # Carga de los escaladores (StandardScaler) guardados
+import joblib
+import pandas as pd
+import mlflow.pyfunc                                              # pyfunc: interfaz generica de MLflow para predecir
+from fastapi import FastAPI, HTTPException, Request, status
+from fastapi.responses import JSONResponse
+from fastapi.exceptions import RequestValidationError
+from pydantic import BaseModel, create_model, field_validator
 
-from fastapi import FastAPI, Request, status                          # Framework principal de la API
-from fastapi.responses import JSONResponse                             # Respuestas de error controladas
-from fastapi.exceptions import RequestValidationError                   # Excepcion que lanza FastAPI ante datos invalidos
-from pydantic import BaseModel, create_model, field_validator             # Validacion de datos de entrada
-
-# ---------------------------------------------------------------------------
-# 2. CONFIGURACION Y LOGGING
-# ---------------------------------------------------------------------------
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("app.main")
 
-# Carpeta donde vive el modelo exportado. Dentro del contenedor, el
-# Dockerfile copia 'model_artifact/' junto a 'app/' en el WORKDIR /app,
-# por lo que la ruta relativa "model_artifact" (subiendo un nivel desde
-# este archivo) resuelve correctamente tanto en Docker como corriendo
-# localmente desde la raiz del proyecto.
-RAIZ_APP = Path(__file__).resolve().parent.parent               # sube de app/ a la raiz (/app dentro del contenedor)
-CARPETA_MODEL_ARTIFACT = RAIZ_APP / "model_artifact"
+# Carpeta con el modelo y los escaladores exportados. Este archivo vive en
+# app/main.py, por lo que 'model_artifact' esta un nivel arriba (la raiz del
+# proyecto, tanto localmente como dentro del contenedor Docker en /app).
+MODEL_DIR = Path(__file__).resolve().parent.parent / "model_artifact"
 
-RUTA_MODELO = CARPETA_MODEL_ARTIFACT / "modelo"
-RUTA_ESCALADOR_X = CARPETA_MODEL_ARTIFACT / "escaladores" / "escalador_X.pkl"
-RUTA_ESCALADOR_Y = CARPETA_MODEL_ARTIFACT / "escaladores" / "escalador_y.pkl"
-RUTA_FEATURE_COLUMNS = CARPETA_MODEL_ARTIFACT / "feature_columns.json"
-RUTA_RUN_ID = CARPETA_MODEL_ARTIFACT / "RUN_ID.txt"
-
-# ---------------------------------------------------------------------------
-# 3. CARGA DE ARTEFACTOS LOCALES (al iniciar la API, una sola vez)
-# ---------------------------------------------------------------------------
-def _cargar_todo():
-    """
-    Carga el modelo, los escaladores y los metadatos de features/target
-    desde la carpeta local model_artifact/. Si algo falta, se deja
-    propagar la excepcion: la API no debe arrancar en un estado
-    inconsistente (mejor que falle rapido al iniciar, no en el primer
-    request de un usuario real).
-    """
-    if not CARPETA_MODEL_ARTIFACT.exists():
-        raise RuntimeError(
-            f"No se encontro la carpeta '{CARPETA_MODEL_ARTIFACT}'. "
-            "Corré export_model.py antes de levantar esta API/contenedor."
-        )
-
-    metadata = json.loads(RUTA_FEATURE_COLUMNS.read_text(encoding="utf-8"))
-    feature_columns = metadata["feature_columns"]
-    target_column = metadata["target_column"]
-
-    modelo = mlflow.sklearn.load_model(str(RUTA_MODELO))          # Carga 100% local, sin red
-    escalador_X = joblib.load(RUTA_ESCALADOR_X)
-    escalador_y = joblib.load(RUTA_ESCALADOR_Y)
-
-    run_id_origen = RUTA_RUN_ID.read_text(encoding="utf-8").strip() if RUTA_RUN_ID.exists() else "desconocido"
-
-    return modelo, escalador_X, escalador_y, feature_columns, target_column, run_id_origen
-
-
-MODELO, ESCALADOR_X, ESCALADOR_Y, FEATURE_COLUMNS, TARGET_COLUMN, RUN_ID_ORIGEN = _cargar_todo()
-
-logger.info(f"Modelo cargado localmente (run de origen: {RUN_ID_ORIGEN}).")
-logger.info(f"Features esperadas por el modelo ({len(FEATURE_COLUMNS)}): {FEATURE_COLUMNS}")
+app = FastAPI(
+    title="API de inferencia — Predicción de C6H6_GT (próxima hora)",
+    description=(
+        "Sirve un MLPRegressor entrenado y registrado en MLflow, exportado "
+        "localmente. Predice la concentración de benceno una hora hacia el "
+        "futuro a partir de las features del proyecto."
+    ),
+    version="1.0.0",
+)
 
 # ---------------------------------------------------------------------------
-# 4. DEFINICION DINAMICA DEL ESQUEMA DE ENTRADA (validacion de datos)
+# CARGA DEL MODELO Y ARTEFACTOS AUXILIARES (una sola vez, al iniciar la API)
 # ---------------------------------------------------------------------------
-# Identico enfoque al de api_prediccion.py: se construye un campo float por
-# cada feature, con validadores que rechazan NaN e infinito, inyectados via
-# __validators__ (necesario en Pydantic v2 para que los validadores dinamicos
-# se registren de verdad).
-campos_dinamicos = {
-    nombre_feature: (float, ...)
-    for nombre_feature in FEATURE_COLUMNS
-}
+# Igual que en el proyecto de referencia: si algo falla acá, el contenedor
+# NO se cae. El error queda guardado en load_error, y /health lo reporta con
+# 503 en vez de que el proceso entero muera al arrancar. Esto es mas facil
+# de diagnosticar en produccion (el contenedor sigue vivo y respondiendo)
+# que un CrashLoopBackOff sin mensaje claro.
+try:
+    modelo = mlflow.pyfunc.load_model(str(MODEL_DIR / "modelo"))       # Modelo cargado via interfaz generica pyfunc
+    escalador_X = joblib.load(MODEL_DIR / "escaladores" / "escalador_X.pkl")
+    escalador_y = joblib.load(MODEL_DIR / "escaladores" / "escalador_y.pkl")
+
+    metadata = json.loads((MODEL_DIR / "feature_columns.json").read_text(encoding="utf-8"))
+    FEATURE_COLUMNS = metadata["feature_columns"]
+    TARGET_COLUMN = metadata["target_column"]
+
+    ruta_run_id = MODEL_DIR / "RUN_ID.txt"
+    MODEL_VERSION = ruta_run_id.read_text(encoding="utf-8").strip() if ruta_run_id.exists() else "desconocida"
+
+    load_error = None
+    logger.info(f"Modelo cargado correctamente (run de origen: {MODEL_VERSION}).")
+    logger.info(f"Features esperadas ({len(FEATURE_COLUMNS)}): {FEATURE_COLUMNS}")
+except Exception as e:
+    modelo = None
+    escalador_X = None
+    escalador_y = None
+    FEATURE_COLUMNS = []
+    TARGET_COLUMN = None
+    MODEL_VERSION = "desconocida"
+    load_error = str(e)
+    logger.exception("No se pudo cargar el modelo o sus artefactos auxiliares.")
 
 
+# ---------------------------------------------------------------------------
+# ESQUEMA DE ENTRADA GENERADO DINAMICAMENTE (un campo float por feature)
+# ---------------------------------------------------------------------------
+# A diferencia del ejemplo de vinos (que conoce de antemano rangos fisicos
+# validos por variable, como alcohol entre 0 y 20), las features de este
+# proyecto (lags, medias moviles, hora/dia/mes, etc.) no tienen un rango
+# universal conocido de antemano, asi que en vez de gt/lt fijos se valida
+# que ningun valor sea NaN o infinito, que es lo que realmente rompe la
+# prediccion sin dar un error claro.
 def _validar_no_nan_ni_infinito(valor: float, nombre_campo: str) -> float:
     if math.isnan(valor):
         raise ValueError(f"El campo '{nombre_campo}' no puede ser NaN.")
@@ -122,44 +99,38 @@ def _validar_no_nan_ni_infinito(valor: float, nombre_campo: str) -> float:
     return valor
 
 
-validadores_dinamicos = {}
-for nombre_feature in FEATURE_COLUMNS:
-    def _crear_validador(nombre_campo):
-        def _validador(cls, valor):
-            return _validar_no_nan_ni_infinito(valor, nombre_campo)
-        return _validador
+def _construir_esquema_entrada(feature_columns: list[str]) -> type[BaseModel]:
+    """Genera el modelo Pydantic de entrada a partir de la lista de features."""
+    campos = {nombre: (float, ...) for nombre in feature_columns}
 
-    validadores_dinamicos[f"_validar_{nombre_feature}"] = field_validator(nombre_feature)(
-        classmethod(_crear_validador(nombre_feature))
-    )
+    validadores = {}
+    for nombre in feature_columns:
+        def _crear_validador(nombre_campo):
+            def _validador(cls, valor):
+                return _validar_no_nan_ni_infinito(valor, nombre_campo)
+            return _validador
 
-EntradaPrediccion: type[BaseModel] = create_model(
-    "EntradaPrediccion",
-    __validators__=validadores_dinamicos,
-    **campos_dinamicos,
-)
+        validadores[f"_validar_{nombre}"] = field_validator(nombre)(
+            classmethod(_crear_validador(nombre))
+        )
+
+    return create_model("EntradaPrediccion", __validators__=validadores, **campos)
 
 
-class SalidaPrediccion(BaseModel):
-    """Esquema de la respuesta exitosa del endpoint /predict."""
+# Si el modelo no cargo, FEATURE_COLUMNS queda vacio: se genera un esquema
+# vacio (sin campos) solo para que la app arranque; /predict va a fallar con
+# 503 antes de siquiera validar, asi que esto nunca se usa de verdad en ese caso.
+EntradaPrediccion = _construir_esquema_entrada(FEATURE_COLUMNS)
+
+
+class PredictionResponse(BaseModel):
     target_next_hour_predicho: float
-    run_id_modelo: str
-    features_utilizadas: list[str]
+    model_version: str
 
 
 # ---------------------------------------------------------------------------
-# 5. APLICACION FASTAPI
+# MANEJO DE ERRORES DE VALIDACION (respuestas 422 claras y legibles)
 # ---------------------------------------------------------------------------
-app = FastAPI(
-    title="API de Prediccion C6H6_GT (proxima hora) - Contenedor",
-    description=(
-        "Sirve el modelo de Red Neuronal (MLPRegressor) exportado localmente "
-        "con export_model.py. No depende de conexion a MLflow ni a SQL Server."
-    ),
-    version="1.0.0",
-)
-
-
 @app.exception_handler(RequestValidationError)
 async def manejador_errores_validacion(request: Request, exc: RequestValidationError):
     errores_legibles = [
@@ -176,50 +147,43 @@ async def manejador_errores_validacion(request: Request, exc: RequestValidationE
     )
 
 
-@app.exception_handler(Exception)
-async def manejador_errores_generico(request: Request, exc: Exception):
-    logger.exception("Error inesperado al procesar la solicitud.")
-    return JSONResponse(
-        status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-        content={"error": "Ocurrio un error inesperado al procesar la solicitud."},
-    )
-
-
+# ---------------------------------------------------------------------------
+# ENDPOINTS
+# ---------------------------------------------------------------------------
 @app.get("/health")
-def salud():
-    """Chequeo simple de que la API esta viva y el modelo quedo cargado."""
-    return {
-        "estado": "ok",
-        "run_id_modelo": RUN_ID_ORIGEN,
-        "cantidad_features": len(FEATURE_COLUMNS),
-    }
+def health():
+    if modelo is None:
+        raise HTTPException(status_code=503, detail=f"Modelo no disponible: {load_error}")
+    return {"status": "ok", "model_version": MODEL_VERSION, "cantidad_features": len(FEATURE_COLUMNS)}
 
 
-@app.post("/predict", response_model=SalidaPrediccion)
-def predecir(entrada: EntradaPrediccion):
-    """
-    Recibe los valores de las features (una fila) y devuelve la prediccion
-    de target_next_hour, usando el modelo y los escaladores cargados
-    localmente desde model_artifact/ (sin ninguna llamada de red).
-    """
-    datos_dict = entrada.model_dump()
+@app.post("/predict", response_model=PredictionResponse)
+def predict(features: EntradaPrediccion):
+    if modelo is None:
+        raise HTTPException(status_code=503, detail=f"El modelo no se cargó correctamente: {load_error}")
+
+    # Se arma un DataFrame de una sola fila, respetando el MISMO orden de
+    # columnas con el que se entreno el modelo (StandardScaler es sensible
+    # al orden de las columnas).
+    datos_dict = features.model_dump()
     fila = pd.DataFrame([[datos_dict[col] for col in FEATURE_COLUMNS]], columns=FEATURE_COLUMNS)
 
-    fila_escalada = ESCALADOR_X.transform(fila)
-    prediccion_escalada = MODELO.predict(fila_escalada)
-    prediccion_real = ESCALADOR_Y.inverse_transform(
-        prediccion_escalada.reshape(-1, 1)
-    ).ravel()[0]
+    # Se escala la entrada con el mismo escalador de entrenamiento
+    fila_escalada = pd.DataFrame(escalador_X.transform(fila), columns=FEATURE_COLUMNS)
+
+    # Prediccion via la interfaz generica pyfunc (funciona igual sin importar
+    # que flavor de sklearn se haya usado para loguear el modelo original)
+    prediccion_escalada = modelo.predict(fila_escalada)
+    valor_escalado = float(pd.Series(prediccion_escalada).iloc[0])
+
+    # Se revierte el escalado para volver a las unidades reales de C6H6_GT
+    prediccion_real = escalador_y.inverse_transform([[valor_escalado]])[0][0]
 
     if math.isnan(prediccion_real) or math.isinf(prediccion_real):
         logger.error(f"El modelo devolvio un valor invalido: {prediccion_real}")
-        return JSONResponse(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            content={"error": "El modelo genero una prediccion invalida (NaN/infinito)."},
-        )
+        raise HTTPException(status_code=500, detail="El modelo genero una prediccion invalida (NaN/infinito).")
 
-    return SalidaPrediccion(
-        target_next_hour_predicho=float(prediccion_real),
-        run_id_modelo=RUN_ID_ORIGEN,
-        features_utilizadas=FEATURE_COLUMNS,
-    )
+    return {
+        "target_next_hour_predicho": float(prediccion_real),
+        "model_version": MODEL_VERSION,
+    }

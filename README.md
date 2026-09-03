@@ -798,6 +798,22 @@ Con el siguiente comando se crea el container
 
 docker run -p 8000:8000 grupo8_air_quality_mlops   
 
+# 31. Testing
+
+Para esta étapa se crean los arhivos test_api.py, test_data.py y test_model.py para hacer diversas pruebas en el proyectom los scripts anteriores se crean en una carpeta llamada tests.
+
+Ahora vamos a instalar pytest y las dependencias de pruebam con el siguiente comando
+
+pip install -r requirements-dev.txt
+
+Por último procedemos a correr las pruebas con el siguiente comando
+pytest tests/
+
+Debemos recibir una salida como la siguiente.
+
+========================================================= 46 passed, 2 skipped, 16 warnings in 3.60s =========================================================
+
+
 
 
 
