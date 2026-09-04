@@ -811,7 +811,25 @@ pytest tests/
 
 Debemos recibir una salida como la siguiente.
 
-========================================================= 46 passed, 2 skipped, 16 warnings in 3.60s =========================================================
+========================================================= 46 passed, 2 skipped, 16 warnings in 3.60s 
+=========================================================
+
+# 31. Monitoring
+
+1. Instalar la dependencia prometheus_client
+Agregá 'prometheus_client' a requirements.txt (la libreria que expone las metricas). Los demas paquetes (fastapi, mlflow, etc.) ya los tenes.
+2. Colocar app/monitoring.py
+Guardá monitoring.py dentro de la carpeta app/ (junto a main.py). Define 5 metricas Prometheus: contador de requests, histograma de latencia, histograma de valores predichos, gauge de disponibilidad del modelo, y contador de errores por tipo.
+3. Actualizar app/main.py con la instrumentacion
+Reemplazá tu app/main.py actual por el que te acabo de dar. Agrega: import del modulo monitoring, un middleware que mide latencia/cuenta requests de forma automatica en TODOS los endpoints, el endpoint GET /metrics, y llamadas puntuales a las metricas en los lugares donde ocurre cada evento (prediccion exitosa, error de validacion, modelo no disponible, prediccion invalida).
+4. Agregar prometheus.yml en la raiz
+Colocá prometheus.yml en la raiz del proyecto. Le dice a Prometheus que consulte http://api:8000/metrics cada 15 segundos ('api' es el nombre del servicio dentro de docker-compose, no una URL externa).
+5. Levantar todo junto con docker-compose
+Colocá docker-compose.monitoring.yml en la raiz. Define 3 servicios: tu API (usa el Dockerfile que ya tenés), Prometheus (recolecta metricas), y Grafana (dashboards visuales). Corré: docker compose -f docker-compose.monitoring.yml up --build
+6. Verificar que Prometheus este recolectando datos
+API en http://localhost:8000/docs (mandá algunos POST /predict de prueba para generar datos). Prometheus en http://localhost:9090 -> pestaña 'Graph', escribí por ejemplo prediccion_target_next_hour_sum o api_requests_total y confirmá que aparecen datos.
+7. Conectar Grafana a Prometheus y armar el dashboard
+Entrá a http://localhost:3000 (admin/admin). Config -> Data sources -> Add data source -> Prometheus -> URL: http://prometheus:9090 (nombre del servicio dentro de la red de docker-compose) -> Save & Test. Despues creá un dashboard nuevo con paneles para: tasa de requests
 
 
 
